@@ -1,0 +1,382 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inventario de Productos</title>
+  <!-- Font Awesome para iconos -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="{% static 'frontend/styles.css' %}">
+</head>
+<body>
+  {% if user.is_authenticated %}
+    <div class="header">
+      <a href="{% url 'logout' %}" class="logout"><i class="fa-solid fa-sign-out-alt"></i> Cerrar sesión</a>
+      <a href="{% url 'store_home' %}"><i class="fa-solid fa-sign-out-alt"></i>Tienda</a>
+    </div>
+  {% endif %}
+
+  <section class="center-card categories-section">
+    <h2><i class="fa-solid fa-tags"></i> Categorías</h2>
+    <form id="category-form" class="inline-form">
+      <input type="text" id="category-name" placeholder="Nueva categoría" required>
+      <button type="submit" class="btn primary">Agregar</button>
+    </form>
+    <div id="category-list" class="list"></div>
+  </section>
+
+  <section class="center-card products-section">
+    <h1><i class="fa-solid fa-boxes-stacked"></i> Inventario de Productos</h1>
+    <div class="filter">
+      <label for="filter-category">Filtrar por categoría:</label>
+      <select id="filter-category">
+        <option value="">Todas</option>
+      </select>
+    </div>
+    <div id="product-list" class="list"></div>
+
+    <h2><i class="fa-solid fa-plus-square"></i> Agregar / Editar Producto</h2>
+    <form id="product-form" class="grid-form">
+      <div class="form-group">
+        <label for="code">Código del producto</label>
+        <input type="text" id="code" required>
+      </div>
+      <div class="form-group">
+        <label for="brand">Marca</label>
+        <input type="text" id="brand" required>
+      </div>
+      <div class="form-group">
+        <label for="brand_code">Código marca</label>
+        <input type="text" id="brand_code" required>
+      </div>
+      <div class="form-group">
+        <label for="name">Nombre</label>
+        <input type="text" id="name" required>
+      </div>
+      <div class="form-group">
+        <label for="product-category">Categoría</label>
+        <select id="product-category"></select>
+      </div>
+      <div class="form-group">
+        <label for="price">Precio</label>
+        <input type="number" step="0.01" id="price" required>
+      </div>
+      <div class="form-actions fullwidth">
+        <button type="submit" id="submit-btn" class="btn primary"><i class="fa-solid fa-floppy-disk"></i> Agregar Producto</button>
+        <button type="button" id="cancel-btn" class="btn danger" style="display:none;"><i class="fa-solid fa-ban"></i> Cancelar</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="center-card movements-section">
+    <h2><i class="fa-solid fa-arrows-rotate"></i> Movimientos de Inventario</h2>
+    <form id="movement-form" class="grid-form">
+      <div class="form-group">
+        <label for="product-select">Producto</label>
+        <select id="product-select"></select>
+      </div>
+      <div class="form-group">
+        <label for="movement-type">Tipo de movimiento</label>
+        <select id="movement-type">
+          <option value="IN">Entrada</option>
+          <option value="OUT">Salida</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="movement-quantity">Cantidad</label>
+        <input type="number" id="movement-quantity" min="1" required>
+      </div>
+      <div class="form-group">
+        <label for="movement-description">Descripción</label>
+        <input type="text" id="movement-description">
+      </div>
+      <div class="form-actions fullwidth">
+        <button type="submit" class="btn primary"><i class="fa-solid fa-check"></i> Registrar Movimiento</button>
+      </div>
+    </form>
+    <div id="movement-list" class="list"></div>
+  </section>
+
+<script>
+// CSRF Token Helper
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+const csrftoken = getCookie('csrftoken');
+
+const categoriesUrl = '/api/categories/';
+const apiUrl = '/api/products/';
+const movementApiUrl = '/api/inventory-movements/';
+
+let categoryMap = {}; // id -> name
+let allCategories = []; // Para filtro
+let allProducts = [];   // Para filtro
+
+// CATEGORÍAS
+async function fetchCategories() {
+    const res = await fetch(categoriesUrl);
+    const data = await res.json();
+    categoryMap = {};
+    allCategories = data;
+    const container = document.getElementById('category-list');
+    container.innerHTML = '';
+    const select = document.getElementById('product-category');
+    select.innerHTML = '<option value="">-- Sin categoría --</option>';
+    data.forEach(cat => {
+        categoryMap[cat.id] = cat.name;
+        container.innerHTML += `
+            <div class="category-item" style="margin-bottom:8px;">
+                <span>${cat.name}</span>
+                <button onclick="deleteCategory(${cat.id})" style="background:#b71c1c;">Eliminar</button>
+            </div>
+        `;
+        select.innerHTML += `<option value="${cat.id}">${cat.name}</option>`;
+    });
+
+    // Opciones del filtro
+    const filter = document.getElementById('filter-category');
+    if (filter) {
+        filter.innerHTML = `<option value="">Todas</option>` +
+            data.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('');
+    }
+}
+
+document.getElementById('category-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = document.getElementById('category-name').value.trim();
+    if (!name) return;
+    await fetch(categoriesUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken
+        },
+        body: JSON.stringify({ name })
+    });
+    document.getElementById('category-form').reset();
+    fetchCategories();
+});
+
+async function deleteCategory(id) {
+    if (!confirm('¿Eliminar esta categoría?')) return;
+    await fetch(categoriesUrl + id + '/', {
+        method: 'DELETE',
+        headers: {
+            'X-CSRFToken': csrftoken
+        }
+    });
+    fetchCategories();
+}
+
+// PRODUCTOS Y FILTRO
+async function fetchProducts() {
+    const res = await fetch(apiUrl);
+    const data = await res.json();
+    allProducts = data; // Guardar todo para filtrar
+    renderProducts();
+}
+
+function renderProducts() {
+    const container = document.getElementById('product-list');
+    const select = document.getElementById('product-select');
+    container.innerHTML = '';
+    select.innerHTML = '<option value="">-- Selecciona producto --</option>';
+    const filterValue = document.getElementById('filter-category').value;
+    const filtered = filterValue ? allProducts.filter(p => (p.categoria_id || "") == filterValue) : allProducts;
+    filtered.forEach(product => {
+        let prices = product.Precio.map(p => p.Valor).join(', ');
+        let catName = product.categoria_nombre || '';
+        let stock = product.quantity ?? ''; // <-- Stock disponible aquí
+        container.innerHTML += `
+            <div class="product-item">
+                <span class="product-info">
+                    <strong>${product.Código_del_producto}</strong> - ${product.Nombre} - ${product.Marca}
+                    ${catName ? ` - <span style="color:#1976d2;">${catName}</span>` : ''}
+                    - <span style="color:#1a7737;"><b>Stock:</b> ${stock}</span>
+                    - Precios: ${prices}
+                </span>
+                <span>
+                    <button onclick="startEdit('${product.Código_del_producto}')">Editar</button>
+                    <button onclick="deleteProduct('${product.Código_del_producto}')">Eliminar</button>
+                </span>
+            </div>
+        `;
+        select.innerHTML += `<option value="${product.id}">${product.Código_del_producto} - ${product.Nombre}</option>`;
+    });
+}
+
+async function deleteProduct(code) {
+    if (!confirm('¿Seguro quieres eliminar este producto?')) return;
+    const res = await fetch(apiUrl + code + '/', {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': csrftoken }
+    });
+    if (res.ok) {
+        fetchProducts();
+        fetchMovements();
+    } else {
+        alert('Error al eliminar producto');
+    }
+}
+
+function startEdit(code) {
+    fetch(apiUrl + code + '/')
+        .then(res => res.json())
+        .then(product => {
+            document.getElementById('code').value = product.Código_del_producto;
+            document.getElementById('brand').value = product.Marca;
+            document.getElementById('brand_code').value = product.Código;
+            document.getElementById('name').value = product.Nombre;
+            document.getElementById('price').value = product.Precio[0]?.Valor || '';
+            document.getElementById('product-category').value = product.categoria_id || "";
+            document.getElementById('code').disabled = true;
+            document.getElementById('submit-btn').textContent = 'Actualizar Producto';
+            document.getElementById('cancel-btn').style.display = 'inline-block';
+            document.getElementById('product-form').dataset.editing = code;
+        });
+}
+
+document.getElementById('cancel-btn').addEventListener('click', () => {
+    document.getElementById('product-form').reset();
+    document.getElementById('code').disabled = false;
+    document.getElementById('submit-btn').textContent = 'Agregar Producto';
+    document.getElementById('cancel-btn').style.display = 'none';
+    delete document.getElementById('product-form').dataset.editing;
+});
+
+document.getElementById('product-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const code = document.getElementById('code').value;
+    const brand = document.getElementById('brand').value;
+    const brand_code = document.getElementById('brand_code').value;
+    const name = document.getElementById('name').value;
+    const price = parseFloat(document.getElementById('price').value);
+    const category = document.getElementById('product-category').value;
+
+    const productData = {
+        "Código_del_producto": code,
+        "Marca": brand,
+        "Código": brand_code,
+        "Nombre": name,
+        "Precio": [{ "Valor": price }],
+        "categoria_id": category || null
+    };
+
+    const isEditing = e.target.dataset.editing;
+
+    let url = apiUrl;
+    let method = 'POST';
+    let headers = {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrftoken
+    };
+
+    if (isEditing) {
+        url += isEditing + '/';
+        method = 'PUT';
+    }
+
+    const res = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(productData)
+    });
+
+    if (res.ok) {
+        fetchProducts();
+        fetchMovements();
+        e.target.reset();
+        document.getElementById('code').disabled = false;
+        document.getElementById('submit-btn').textContent = 'Agregar Producto';
+        document.getElementById('cancel-btn').style.display = 'none';
+        delete e.target.dataset.editing;
+    } else {
+        alert('Error al guardar producto');
+    }
+});
+
+// MOVIMIENTOS DE INVENTARIO
+async function fetchMovements() {
+    const res = await fetch(movementApiUrl);
+    const data = await res.json();
+    const container = document.getElementById('movement-list');
+    container.innerHTML = '<h3>Historial de movimientos</h3>';
+    data.forEach(m => {
+        container.innerHTML += `
+            <div class="movement-item">
+        <strong>${m.product_name}</strong> (ID: ${m.product}) - Tipo: ${m.movement_type_display} - 
+        Cantidad: ${m.quantity} - Fecha: ${new Date(m.date).toLocaleString()} - ${m.description || ''}
+    </div>
+        `;
+    });
+}
+
+document.getElementById('movement-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const product = document.getElementById('product-select').value;
+    const movement_type = document.getElementById('movement-type').value;
+    const quantity = parseInt(document.getElementById('movement-quantity').value);
+    const description = document.getElementById('movement-description').value;
+
+    if (!product) {
+        alert('Selecciona un producto');
+        return;
+    }
+    if (quantity <= 0) {
+        alert('Cantidad debe ser mayor a 0');
+        return;
+    }
+
+    const movementData = {
+        product,
+        movement_type,
+        quantity,
+        description
+    };
+
+    const res = await fetch(movementApiUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken
+        },
+        body: JSON.stringify(movementData)
+    });
+
+    if (res.ok) {
+        fetchProducts();
+        fetchMovements();
+        e.target.reset();
+    } else {
+        const err = await res.json();
+        alert('Error al registrar movimiento: ' + JSON.stringify(err));
+    }
+});
+
+// FILTRO: Cambiar categoría
+document.getElementById('filter-category').addEventListener('change', renderProducts);
+
+// Cargar todo al inicio
+fetchCategories();
+fetchProducts();
+fetchMovements();
+</script>
+<footer style="background-color: #333; color: white; text-align: center; padding: 10px;">
+    © 2025 INVENTARIO 
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,140 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Tienda Ferremas</title>
+    <link rel="stylesheet" href="{% static 'store/styles.css' %}">
+    <!-- Font Awesome para iconos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <header>
+        <h1>Ferremas Store</h1>
+        <a href="{% url 'store_cart' %}"><i class="fa-solid fa-cart-shopping"></i> Carrito</a>
+    </header>
+    <main>
+        <h2>Productos en venta</h2>
+
+        <div class="store-filters">
+            <input type="text" id="search-input" placeholder="Buscar productos...">
+            <select id="filter-category">
+                <option value="">Todas las categorías</option>
+            </select>
+        </div>
+
+        <div id="product-list" class="store-grid"></div>
+    </main>
+
+    <footer>
+        <p style="text-align:center; padding: 1rem;">&copy; 2025 Ferremas - Todos los derechos reservados</p>
+    </footer>
+
+    <script>
+    // Cargar productos y categorías desde la API existente
+    const apiUrl = "/api/products/";
+    const categoriesUrl = "/api/categories/";
+
+    let products = [];
+    let categories = [];
+
+    async function fetchCategories() {
+        const res = await fetch(categoriesUrl);
+        categories = await res.json();
+        const select = document.getElementById('filter-category');
+        select.innerHTML = `<option value="">Todas las categorías</option>` +
+            categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('');
+    }
+
+    async function fetchProducts() {
+        const res = await fetch(apiUrl);
+        products = await res.json();
+        renderProducts();
+    }
+
+    function renderProducts() {
+        const search = document.getElementById('search-input').value.toLowerCase();
+        const filterCat = document.getElementById('filter-category').value;
+        const list = document.getElementById('product-list');
+        let filtered = products;
+
+        if (search) {
+            filtered = filtered.filter(p => p.Nombre.toLowerCase().includes(search) || p.Código_del_producto.toLowerCase().includes(search));
+        }
+        if (filterCat) {
+            filtered = filtered.filter(p => (p.categoria_id || "").toString() === filterCat);
+        }
+        if (filtered.length === 0) {
+            list.innerHTML = `<p style="text-align:center;">No hay productos disponibles.</p>`;
+            return;
+        }
+        list.innerHTML = filtered.map(p => `
+            <div class="store-product-card">
+                 <div class="product-main">
+                    <div class="product-image-box">
+                      <img src="${p.image_url || '/static/store/no-image.png'}", alt="" class="product-image"> 
+                    </div>
+                    <h3>${p.Nombre}</h3>
+                    <div class="product-meta">
+                        <span class="prod-brand"><i class="fa-solid fa-tag"></i> ${p.Marca}</span>
+                        <span class="prod-code"><i class="fa-solid fa-barcode"></i> ${p.Código_del_producto}</span>
+                    </div>
+                    ${p.categoria_nombre ? `<div class="prod-cat"><i class="fa-solid fa-tags"></i> ${p.categoria_nombre}</div>` : ""}
+                </div>
+                <div class="product-price-stock">
+                    <div class="prod-price"><i class="fa-solid fa-dollar-sign"></i> ${p.Precio.length > 0 ? p.Precio[0].Valor : '---'}</div>
+                    <div class="prod-stock"><i class="fa-solid fa-boxes-stacked"></i> Stock: ${p.quantity ?? 0}</div>
+                    <button class="btn primary" onclick="addToCart('${p.Código_del_producto}')"><i class="fa-solid fa-cart-plus"></i> Comprar</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    document.getElementById('search-input').addEventListener('input', renderProducts);
+    document.getElementById('filter-category').addEventListener('change', renderProducts);
+
+    // Simulación de función para el carrito (próximo paso)
+    function addToCart(code) {
+    // Buscar el producto en el array "products"
+    const product = products.find(p => p.Código_del_producto === code);
+    if (!product) {
+        alert('Producto no encontrado');
+        return;
+    }
+
+    // Recuperar carrito actual
+    let cart = localStorage.getItem('ferremas_cart');
+    cart = cart ? JSON.parse(cart) : [];
+
+    // Chequear si ya está, si sí aumenta cantidad, si no agregar nuevo
+    let item = cart.find(i => i.code === code);
+    const stock = product.quantity ?? 0;
+
+    if (item) {
+        if (item.quantity < stock) {
+            item.quantity += 1;
+        } else {
+            alert('¡No puedes agregar más, no hay suficiente stock!');
+            return;
+        }
+    } else {
+        cart.push({
+            code: product.Código_del_producto,
+            name: product.Nombre,
+            brand: product.Marca,
+            price: product.Precio.length > 0 ? parseFloat(product.Precio[0].Valor) : 0,
+            max_stock: stock,
+            quantity: 1,
+            category: product.categoria_nombre || ""
+        });
+    }
+    localStorage.setItem('ferremas_cart', JSON.stringify(cart));
+    alert('¡Producto agregado al carrito!');
+}
+
+
+    // Inicializar
+    fetchCategories().then(fetchProducts);
+    </script>
+</body>
+</html>

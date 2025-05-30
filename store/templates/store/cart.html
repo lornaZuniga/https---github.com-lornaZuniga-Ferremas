@@ -1,0 +1,232 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Carrito de compras | Ferremas</title>
+    <link rel="stylesheet" href="{% static 'store/styles.css' %}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .cart-product-main {
+            display: flex;
+            align-items: center;
+        }
+        @media (max-width:600px){
+            .cart-product-main { flex-direction:column; align-items:flex-start; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Carrito de compras</h1>
+        <a href="{% url 'store_home' %}"><i class="fa-solid fa-arrow-left"></i> Volver a la tienda</a>
+    </header>
+    <main>
+        <h2>Tu carrito</h2>
+
+        <div style="margin:10px 0">
+            <label for="currency-select"><strong>Moneda de pago: </strong></label>
+            <select id="currency-select">
+                <option value="CLP">Pesos Chilenos (CLP)</option>
+                <option value="USD">Dólar EE.UU (USD)</option>
+                <option value="EUR">Euro (EUR)</option>
+            </select>
+        </div>
+
+        <div id="cart-list" class="store-grid"></div>
+        <div id="cart-summary"></div>
+    </main>
+    <footer>
+        <p style="text-align:center; padding: 1rem;">&copy; 2025 Ferremas - Todos los derechos reservados</p>
+    </footer>
+
+    <script>
+    // ----------- CSRF TOKEN HELPER -----------
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    // ----------- FUNCIONES DEL CARRITO -----------
+    function getCart() {
+        let cart = localStorage.getItem('ferremas_cart');
+        return cart ? JSON.parse(cart) : [];
+    }
+
+    function saveCart(cart) {
+        localStorage.setItem('ferremas_cart', JSON.stringify(cart));
+    }
+
+    function removeFromCart(code) {
+        let cart = getCart();
+        cart = cart.filter(item => item.code !== code);
+        saveCart(cart);
+        renderCart();
+    }
+
+    function changeQty(code, qty) {
+        let cart = getCart();
+        cart = cart.map(item => item.code === code ? { ...item, quantity: qty } : item);
+        saveCart(cart);
+        renderCart();
+    }
+
+    // --- Manejo de monedas ---
+    let exchangeRates = {
+        CLP: 1,
+        USD: null,
+        EUR: null
+    };
+
+    async function updateExchangeRates() {
+        try {
+            if (!exchangeRates.USD) {
+                let resUSD = await fetch("https://mindicador.cl/api/dolar");
+                let dataUSD = await resUSD.json();
+                exchangeRates.USD = dataUSD.serie[0].valor;
+            }
+            if (!exchangeRates.EUR) {
+                let resEUR = await fetch("https://mindicador.cl/api/euro");
+                let dataEUR = await resEUR.json();
+                exchangeRates.EUR = dataEUR.serie[0].valor;
+            }
+        } catch(e) {
+            alert("No se pudo obtener el tipo de cambio. Mostrando precios en CLP.");
+            document.getElementById('currency-select').value = "CLP";
+        }
+    }
+
+    // --- Renderizado del carrito, considerando moneda seleccionada ---
+    async function renderCart() {
+        let cart = getCart();
+        const list = document.getElementById('cart-list');
+        const summary = document.getElementById('cart-summary');
+        const currency = document.getElementById('currency-select').value;
+
+        // Si requiere tasas, consultarlas
+        if (currency !== "CLP" && (!exchangeRates.USD || !exchangeRates.EUR)) {
+            await updateExchangeRates();
+        }
+
+        let rate = exchangeRates[currency] || 1;
+        let symbol = currency === "CLP" ? "$" : (currency === "USD" ? "US$" : "€");
+
+        if (cart.length === 0) {
+            list.innerHTML = "<p style='text-align:center'>No hay productos en el carrito.</p>";
+            summary.innerHTML = "";
+            return;
+        }
+
+        let total = 0;
+        list.innerHTML = cart.map(p => {
+            let converted = (p.price / rate);
+            let subtotal = converted * p.quantity;
+            total += subtotal;
+            return `
+                <div class="store-product-card">
+                    <div class="cart-product-main">
+                        <div>
+                            <h3>${p.name}</h3>
+                            <div class="product-meta">
+                                <span><i class="fa-solid fa-barcode"></i> ${p.code}</span>
+                                <span><i class="fa-solid fa-tag"></i> ${p.brand}</span>
+                                ${p.category ? `<div class="prod-cat"><i class="fa-solid fa-tags"></i> ${p.category}</div>` : ""}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="product-price-stock">
+                        <div class="prod-price"><i class="fa-solid fa-dollar-sign"></i> ${symbol} ${converted.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+                        <label>
+                            <span>Cantidad: </span>
+                            <input type="number" min="1" max="${p.max_stock}" value="${p.quantity}" style="width:50px" onchange="changeQty('${p.code}', this.value)">
+                            <span style="color:#888;font-size:0.9em;">(Stock: ${p.max_stock})</span>
+                        </label>
+                        <div class="prod-subtotal">Subtotal: ${symbol}${subtotal.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+                        <button class="btn danger" onclick="removeFromCart('${p.code}')"><i class="fa-solid fa-trash"></i> Quitar</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        summary.innerHTML = `<div style="text-align:right; margin-top:20px;">
+            <strong>Total: ${symbol}${total.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</strong>
+            <button class="btn primary" onclick="checkout()"><i class="fa-solid fa-credit-card"></i> Pagar con WebPay</button>
+        </div>`;
+    }
+
+    // --- Checkout que descuenta stock (con CSRF token en cabecera) ---
+    async function checkout() {
+        let cart = getCart();
+        if (cart.length === 0) {
+            alert("No hay productos en el carrito.");
+            return;
+        }
+
+        // OBTIENE EL CSRF TOKEN
+        const csrftoken = getCookie('csrftoken');
+
+        // Obtener todos los productos desde la API para mapear code -> id
+        let res = await fetch('/api/products/');
+        let productsApi = await res.json();
+
+        // Mapea los codes del carrito a sus IDs
+        let errors = [];
+        for (let item of cart) {
+            let productoApi = productsApi.find(p => p.Código_del_producto === item.code);
+            if (!productoApi) {
+                errors.push({ producto: item.name, mensaje: "No se encontró el producto en inventario" });
+                continue;
+            }
+            let resp = await fetch("/api/inventory-movements/", {
+                method: "POST",
+                headers: { 
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": csrftoken
+                },
+                body: JSON.stringify({
+                    product: productoApi.id,
+                    movement_type: "OUT",
+                    quantity: item.quantity,
+                    description: "Venta online"
+                })
+            });
+
+            if (!resp.ok) {
+                let err = await resp.json();
+                errors.push({ producto: item.name, mensaje: err.detail || "Error al descontar stock" });
+            }
+        }
+
+        if (errors.length === 0) {
+            localStorage.removeItem("ferremas_cart");
+            renderCart();
+            alert("¡Compra realizada con éxito!");
+        } else {
+            let mensaje = "Algunos productos no pudieron ser comprados:\n\n" +
+                errors.map(e => `- ${e.producto}: ${e.mensaje}`).join("\n");
+            alert(mensaje);
+        }
+    }
+
+    // Inicializar
+    renderCart();
+
+    // Hacer disponibles las funciones al window para los botones
+    window.removeFromCart = removeFromCart;
+    window.changeQty = changeQty;
+    window.checkout = checkout;
+
+    // Cambio de moneda: volver a renderizar
+    document.getElementById('currency-select').addEventListener('change', renderCart);
+    </script>
+</body>
+</html>
